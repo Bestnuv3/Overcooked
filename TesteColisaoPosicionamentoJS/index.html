@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador 3D - Three.js</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body style="margin: 0; overflow: hidden;">
+    <script>
+        // Configuração da cena
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Carregar a textura de fundo
+        const textureLoader = new THREE.TextureLoader();
+        const backgroundTexture = textureLoader.load('background.jpg');
+
+        // Aplicar como fundo da cena
+        scene.background = backgroundTexture;
+
+        // Luz na cena
+        const light = new THREE.DirectionalLight(0xffffff, 1);
+        light.position.set(5, 5, 7);
+        scene.add(light);
+
+        const light2 = new THREE.DirectionalLight(0xffffff, 1);
+        light2.position.set(-4, -5, -7); // Posição oposta à primeira luz
+        scene.add(light2);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Color and intensity
+        scene.add(ambientLight);
+
+        // Carregador GLTF
+        const loader = new THREE.GLTFLoader();
+        loader.load('testeJS.glb', function (gltf) {
+            const model = gltf.scene;
+            scene.add(model);
+            model.position.set(0, 0, 0); // Ajuste a posição se necessário
+        }, undefined, function (error) {
+            console.error('Erro ao carregar modelo:', error);
+        });
+
+        // Controles de câmera
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        camera.position.set(0, 7, 8);
+        controls.update();
+
+        // Loop de animação
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // Ajuste ao redimensionar a tela
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+        });
+    </script>
+</body>
+</html>
