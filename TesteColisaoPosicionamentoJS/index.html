@@ -17,46 +17,141 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.body.appendChild(renderer.domElement);
 
-        // Carregar a textura de fundo
-        const textureLoader = new THREE.TextureLoader();
-        const backgroundTexture = textureLoader.load('background.jpg');
-
-        // Aplicar como fundo da cena
-        scene.background = backgroundTexture;
-
-        // Luz na cena
-        const light = new THREE.DirectionalLight(0xffffff, 1);
-        light.position.set(5, 5, 7);
-        scene.add(light);
-
-        const light2 = new THREE.DirectionalLight(0xffffff, 1);
-        light2.position.set(-4, -5, -7); // Posição oposta à primeira luz
-        scene.add(light2);
-
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Color and intensity
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3); // Cor branca, intensidade 0.3
         scene.add(ambientLight);
+
+        renderer.shadowMap.enabled = true;  
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
         // Carregador GLTF
         const loader = new THREE.GLTFLoader();
-        loader.load('testeJS.glb', function (gltf) {
+        loader.load('uncookedRestaurant.glb', function (gltf) {
             const model = gltf.scene;
             scene.add(model);
             model.position.set(0, 0, 0); // Ajuste a posição se necessário
+
+            // Ajustar a intensidade das luzes dentro do modelo
+            model.traverse((node) => {
+                if (node instanceof THREE.Light) { // Correção: Verifica se é uma luz
+                    node.intensity *= 0.0007; // Reduz brilho para 10% do valor original
+                }
+            });
+
         }, undefined, function (error) {
             console.error('Erro ao carregar modelo:', error);
         });
 
-        // Controles de câmera
+        let mixer, idleAction, walkAction, activeAction;
+        let character; // Declaração global do personagem
+
+        loader.load('characterLowPoly.glb', function (gltf) {
+            character = gltf.scene; // Agora `character` é global
+            scene.add(character);
+            character.position.y += 1;
+
+            character.scale.set(1.25, 1.25, 1.25);
+
+            character.traverse((node) => {
+                if (node.isMesh) {
+                    node.castShadow = true;  // Modelo lança sombra
+                    node.receiveShadow = true; // Modelo recebe sombra
+                }
+            });
+
+            // Criar AnimationMixer
+            mixer = new THREE.AnimationMixer(character);
+
+            // Obter animações
+            const animations = gltf.animations;
+            idleAction = mixer.clipAction(animations[0]); // Primeira animação (Idle)
+            walkAction = mixer.clipAction(animations[1]); // Segunda animação (Walking)
+
+            // Definir ação inicial
+            activeAction = idleAction;
+            activeAction.play();
+        }, undefined, function (error) {
+            console.error('Erro ao carregar personagem:', error);
+        });
+
+        let moveSpeed = 0.05; // Velocidade do personagem
+        let direction = new THREE.Vector3(); // Direção do movimento
+
+        function updateCharacterMovement() {
+            if (!character) return; // Evita erro se o personagem não carregou ainda
+
+            direction.set(0, 0, 0); // Resetar direção
+
+            if (keys.w) direction.z -= 1; // Frente
+            if (keys.s) direction.z += 1; // Trás
+            if (keys.a) direction.x -= 1; // Esquerda
+            if (keys.d) direction.x += 1; // Direita
+
+            if (direction.lengthSq() > 0) { 
+                direction.normalize(); // Normalizar para evitar velocidades inconsistentes
+                character.position.add(direction.clone().multiplyScalar(moveSpeed)); // Movimenta o personagem
+                
+                // Criar um ponto para onde olhar
+                const targetPosition = character.position.clone().add(direction);
+                character.lookAt(targetPosition); // Faz o personagem girar na direção do movimento
+            }
+        }
+
+        /// Controles de câmera
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        camera.position.set(0, 7, 8);
+        camera.position.set(0, 13, 17);
+        controls.enableZoom = false; 
         controls.update();
+
+        const keys = { w: false, a: false, s: false, d: false };
+
+        window.addEventListener('keydown', (event) => {
+            if (keys[event.key] !== undefined) {
+                keys[event.key] = true;
+                updateAnimation();
+            }
+        });
+
+        window.addEventListener('keyup', (event) => {
+            if (keys[event.key] !== undefined) {
+                keys[event.key] = false;
+                updateAnimation();
+            }
+        });
+
+        // Função para alternar animações
+        function updateAnimation() {
+            const isMoving = keys.w || keys.a || keys.s || keys.d;
+
+            if (isMoving && activeAction !== walkAction) {
+                switchAnimation(walkAction);
+            } else if (!isMoving && activeAction !== idleAction) {
+                switchAnimation(idleAction);
+            }
+        }
+
+        // Função para trocar suavemente entre animações
+        function switchAnimation(newAction) {
+            activeAction.fadeOut(0.2);
+            newAction.reset().fadeIn(0.2).play();
+            activeAction = newAction;
+        }
+
 
         // Loop de animação
         function animate() {
             requestAnimationFrame(animate);
+    
+            const delta = clock.getDelta();
+            if (mixer) mixer.update(delta); // Atualizar animações
+
+            updateCharacterMovement(); // Atualiza posição do personagem
+
             controls.update();
             renderer.render(scene, camera);
         }
+
+
+        const clock = new THREE.Clock(); // Criar um clock para animação
         animate();
 
         // Ajuste ao redimensionar a tela
