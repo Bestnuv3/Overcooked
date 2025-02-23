@@ -26,15 +26,18 @@
     scene.add(ambientLight);
 
     // Variáveis globais
-    let collidableBoxes = []; // para os colisores do ambiente (exceto porta)
-    let doorSpawnPosition = null; // posição da porta onde o personagem deve iniciar
+    let collidableBoxes = []; 
+    let doorSpawnPosition = null; 
 
     // Variáveis do personagem
     let character, mixer, idleAction, walkAction, activeAction;
     let characterBoundingBoxOffset = null;
 
-    // Variáveis do NPC (opcional)
+    // Variáveis do NPC
     let npc, npcMixer, npcIdleAction, npcWalkAction, npcActiveAction;
+    let npcTargetPosition = new THREE.Vector3(0, 3, 0);
+    let npcIsMoving = false;
+    let npcMoveSpeed = 0.03;
 
     // Instância do GLTFLoader
     const loader = new THREE.GLTFLoader();
@@ -98,7 +101,7 @@
         if (doorSpawnPosition) {
           character.position.copy(doorSpawnPosition);
         } else {
-          character.position.set(0, 1, 0);
+          character.position.set(-1, 3, 0);
         }
         character.scale.set(1.25, 1.25, 1.25);
 
@@ -121,12 +124,12 @@
       });
     }
 
-    // FUNÇÃO: Carrega o NPC (opcional)
+    // FUNÇÃO: Carrega o NPC
     function loadNPC() {
       loader.load('npcLowPoly.glb', function(gltf) {
         npc = gltf.scene;
         scene.add(npc);
-        npc.position.set(3, 1, 0);
+        npc.position.set(9, 3, 0);
         npc.scale.set(1.25, 1.25, 1.25);
 
         npcMixer = new THREE.AnimationMixer(npc);
@@ -135,9 +138,55 @@
         npcWalkAction = npcMixer.clipAction(npcAnimations[1]);
         npcActiveAction = npcIdleAction;
         npcActiveAction.play();
+
+        // Inicia o movimento do NPC
+        startNPCMovement();
       }, undefined, function(error) {
         console.error("Erro ao carregar o NPC:", error);
       });
+    }
+
+    // Funções para controle do movimento do NPC
+    function startNPCMovement() {
+      const waypoints = [
+        new THREE.Vector3(9, 3, 0),    // Posição inicial
+        new THREE.Vector3(5, 3, 0),    // Posição final
+      ];
+      let currentWaypoint = 0;
+
+      function moveToNextWaypoint() {
+        currentWaypoint = 1; // Sempre vai para o ponto final
+        npcTargetPosition.copy(waypoints[currentWaypoint]);
+        npcIsMoving = true;
+        switchNPCAnimation(npcWalkAction);
+      }
+
+      moveToNextWaypoint();
+    }
+
+    function updateNPCMovement() {
+      if (!npc || !npcIsMoving) return;
+
+      const direction = npcTargetPosition.clone().sub(npc.position);
+      const distance = direction.length();
+
+      if (distance > 0.1) {
+        direction.normalize();
+        npc.position.add(direction.multiplyScalar(npcMoveSpeed));
+        npc.lookAt(npcTargetPosition);
+      } else {
+        // Quando chegar ao destino, para completamente
+        npcIsMoving = false;
+        switchNPCAnimation(npcIdleAction);
+        // Não adiciona setTimeout aqui para que ele pare no destino
+      }
+    }
+
+    function switchNPCAnimation(newAction) {
+      if (npcActiveAction === newAction) return;
+      npcActiveAction.fadeOut(0.2);
+      newAction.reset().fadeIn(0.2).play();
+      npcActiveAction = newAction;
     }
 
     // CONTROLE DA CÂMERA COM ORBITCONTROLS
@@ -215,6 +264,7 @@
       if (mixer) mixer.update(delta);
       if (npcMixer) npcMixer.update(delta);
       updateCharacterMovement();
+      updateNPCMovement(); // Adiciona o update do NPC
       controls.update();
       renderer.render(scene, camera);
     }
