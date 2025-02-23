@@ -1,179 +1,233 @@
 <!DOCTYPE html>
 <html lang="pt">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visualizador 3D - Three.js</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Personagem Inicia na Porta</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body style="margin: 0; overflow: hidden;">
-    <script>
-        // Configuração da cena
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
+  <script>
+    // CONFIGURAÇÃO BÁSICA: CENA, CÂMERA E RENDERIZADOR
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(
+      75, window.innerWidth / window.innerHeight, 0.1, 1000
+    );
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3); // Cor branca, intensidade 0.3
-        scene.add(ambientLight);
+    // LUZ AMBIENTE
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+    scene.add(ambientLight);
 
-        renderer.shadowMap.enabled = true;  
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Variáveis globais
+    let collidableBoxes = []; // para os colisores do ambiente (exceto porta)
+    let doorSpawnPosition = null; // posição da porta onde o personagem deve iniciar
 
-        // Carregador GLTF
-        const loader = new THREE.GLTFLoader();
-        loader.load('uncookedRestaurant.glb', function (gltf) {
-            const model = gltf.scene;
-            scene.add(model);
-            model.position.set(0, 0, 0); // Ajuste a posição se necessário
+    // Variáveis do personagem
+    let character, mixer, idleAction, walkAction, activeAction;
+    let characterBoundingBoxOffset = null;
 
-            // Ajustar a intensidade das luzes dentro do modelo
-            model.traverse((node) => {
-                if (node instanceof THREE.Light) { // Correção: Verifica se é uma luz
-                    node.intensity *= 0.0007; // Reduz brilho para 10% do valor original
-                }
-            });
+    // Variáveis do NPC (opcional)
+    let npc, npcMixer, npcIdleAction, npcWalkAction, npcActiveAction;
 
-        }, undefined, function (error) {
-            console.error('Erro ao carregar modelo:', error);
-        });
+    // Instância do GLTFLoader
+    const loader = new THREE.GLTFLoader();
 
-        let mixer, idleAction, walkAction, activeAction;
-        let character; // Declaração global do personagem
+    // FUNÇÃO: Carrega o ambiente e obtém a posição da porta
+    function loadEnvironment() {
+      loader.load('uncookedRestaurant.glb', function(gltf) {
+        const model = gltf.scene;
+        scene.add(model);
+        model.position.set(0, 0, 0);
 
-        loader.load('characterLowPoly.glb', function (gltf) {
-            character = gltf.scene; // Agora character é global
-            scene.add(character);
-            character.position.y += 1;
-
-            character.scale.set(1.25, 1.25, 1.25);
-
-            // Criar AnimationMixer
-            mixer = new THREE.AnimationMixer(character);
-
-            // Obter animações
-            const animations = gltf.animations;
-            idleAction = mixer.clipAction(animations[0]); // Primeira animação (Idle)
-            walkAction = mixer.clipAction(animations[1]); // Segunda animação (Walking)
-
-            // Definir ação inicial
-            activeAction = idleAction;
-            activeAction.play();
-        }, undefined, function (error) {
-            console.error('Erro ao carregar personagem:', error);
-        });
-
-        let moveSpeed = 0.05; // Velocidade do personagem
-        let direction = new THREE.Vector3(); // Direção do movimento
-
-        function updateCharacterMovement() {
-            if (!character) return; // Evita erro se o personagem não carregou ainda
-
-            direction.set(0, 0, 0); // Resetar direção
-
-            if (keys.w) direction.z -= 1; // Frente
-            if (keys.s) direction.z += 1; // Trás
-            if (keys.a) direction.x -= 1; // Esquerda
-            if (keys.d) direction.x += 1; // Direita
-
-            if (direction.lengthSq() > 0) { 
-                direction.normalize(); // Normalizar para evitar velocidades inconsistentes
-                character.position.add(direction.clone().multiplyScalar(moveSpeed)); // Movimenta o personagem
-                
-                // Criar um ponto para onde olhar
-                const targetPosition = character.position.clone().add(direction);
-                character.lookAt(targetPosition); // Faz o personagem girar na direção do movimento
+        // Gere colisores para todos os objetos, exceto a porta
+        model.traverse((node) => {
+          if (node instanceof THREE.Light) {
+            node.intensity *= 0.0007;
+          }
+          if (node.isMesh && node.visible) {
+            const nodeName = node.name.toLowerCase();
+            // Se o objeto for a porta, ignore-o para colisão
+            if (nodeName.includes("porta") || nodeName.includes("door")) {
+              return;
             }
-        }
-
-        let npc, npcMixer, npcIdleAction, npcWalkAction, npcActiveAction; // Variáveis separadas para o NPC
-
-        loader.load('npcLowPoly.glb', function (gltf) {
-            npc = gltf.scene;
-            scene.add(npc);
-            npc.position.set(3, 1, 0);
-            npc.scale.set(1.25, 1.25, 1.25);
-
-            // Criar um AnimationMixer separado para o NPC
-            npcMixer = new THREE.AnimationMixer(npc);
-
-            // Obter animações do NPC
-            const npcAnimations = gltf.animations;
-            npcIdleAction = npcMixer.clipAction(npcAnimations[0]); // Primeira animação (Idle)
-            npcWalkAction = npcMixer.clipAction(npcAnimations[1]); // Segunda animação (Walking)
-
-            // Definir ação inicial do NPC
-            npcActiveAction = npcIdleAction;
-            npcActiveAction.play();
-        }, undefined, function (error) {
-            console.error('Erro ao carregar NPC:', error);
-        });
-
-        /// Controles de câmera
-        const controls = new THREE.OrbitControls(camera, renderer.domElement);
-        camera.position.set(0, 13, 17);
-        controls.enableZoom = false; 
-        controls.update();
-
-        const keys = { w: false, a: false, s: false, d: false };
-
-        window.addEventListener('keydown', (event) => {
-            if (keys[event.key] !== undefined) {
-                keys[event.key] = true;
-                updateAnimation();
+            node.updateMatrixWorld(true);
+            if (!node.geometry.boundingBox) {
+              node.geometry.computeBoundingBox();
             }
-        });
-
-        window.addEventListener('keyup', (event) => {
-            if (keys[event.key] !== undefined) {
-                keys[event.key] = false;
-                updateAnimation();
+            let box = new THREE.Box3().setFromObject(node);
+            box.expandByScalar(-0.1);
+            if (!box.isEmpty()) {
+              collidableBoxes.push(box);
             }
+          }
         });
 
-        // Função para alternar animações
-        function updateAnimation() {
-            const isMoving = keys.w || keys.a || keys.s || keys.d;
-
-            if (isMoving && activeAction !== walkAction) {
-                switchAnimation(walkAction);
-            } else if (!isMoving && activeAction !== idleAction) {
-                switchAnimation(idleAction);
-            }
+        // Obtenha explicitamente o objeto da porta para definir o spawn
+        // ATENÇÃO: verifique o nome exato no seu modelo (aqui usamos "Porta")
+        const doorObject = model.getObjectByName("Porta");
+        if (doorObject) {
+          doorObject.updateMatrixWorld(true);
+          // Use a posição da porta e ajuste a altura se necessário (aqui adicionamos 1 unidade no Y)
+          doorSpawnPosition = doorObject.position.clone();
+          doorSpawnPosition.y += 1;
+          console.log("Posição de spawn definida na porta:", doorSpawnPosition);
+        } else {
+          console.warn("Objeto 'Porta' não encontrado. Verifique o nome no modelo.");
         }
+        // Após carregar o ambiente, carregue o personagem e o NPC
+        loadCharacter();
+        loadNPC();
+      }, undefined, function(error) {
+        console.error("Erro ao carregar o ambiente:", error);
+      });
+    }
 
-        // Função para trocar suavemente entre animações
-        function switchAnimation(newAction) {
-            activeAction.fadeOut(0.2);
-            newAction.reset().fadeIn(0.2).play();
-            activeAction = newAction;
+    // FUNÇÃO: Carrega o personagem e posiciona na porta
+    function loadCharacter() {
+      loader.load('characterLowPoly.glb', function(gltf) {
+        character = gltf.scene;
+        scene.add(character);
+        // Se a posição de spawn da porta foi definida, use-a; senão, posicione em (0,1,0)
+        if (doorSpawnPosition) {
+          character.position.copy(doorSpawnPosition);
+        } else {
+          character.position.set(0, 1, 0);
         }
+        character.scale.set(1.25, 1.25, 1.25);
 
-        function animate() {
-            requestAnimationFrame(animate);
+        mixer = new THREE.AnimationMixer(character);
+        const animations = gltf.animations;
+        idleAction = mixer.clipAction(animations[0]);
+        walkAction = mixer.clipAction(animations[1]);
+        activeAction = idleAction;
+        activeAction.play();
 
-            const delta = clock.getDelta();
-            if (mixer) mixer.update(delta); // Atualizar animações do personagem
-            if (npcMixer) npcMixer.update(delta); // Atualizar animações do NPC
+        // Calcula o bounding box do personagem e armazena o offset em relação à sua posição
+        const bbox = new THREE.Box3().setFromObject(character);
+        bbox.expandByScalar(-0.1);
+        characterBoundingBoxOffset = {
+          min: bbox.min.clone().sub(character.position),
+          max: bbox.max.clone().sub(character.position)
+        };
+      }, undefined, function(error) {
+        console.error("Erro ao carregar o personagem:", error);
+      });
+    }
 
-            updateCharacterMovement(); // Atualiza posição do personagem
+    // FUNÇÃO: Carrega o NPC (opcional)
+    function loadNPC() {
+      loader.load('npcLowPoly.glb', function(gltf) {
+        npc = gltf.scene;
+        scene.add(npc);
+        npc.position.set(3, 1, 0);
+        npc.scale.set(1.25, 1.25, 1.25);
 
-            controls.update();
-            renderer.render(scene, camera);
+        npcMixer = new THREE.AnimationMixer(npc);
+        const npcAnimations = gltf.animations;
+        npcIdleAction = npcMixer.clipAction(npcAnimations[0]);
+        npcWalkAction = npcMixer.clipAction(npcAnimations[1]);
+        npcActiveAction = npcIdleAction;
+        npcActiveAction.play();
+      }, undefined, function(error) {
+        console.error("Erro ao carregar o NPC:", error);
+      });
+    }
+
+    // CONTROLE DA CÂMERA COM ORBITCONTROLS
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    camera.position.set(0, 13, 17);
+    controls.enableZoom = false;
+    controls.update();
+
+    // CONTROLE DE TECLADO
+    const keys = { w: false, a: false, s: false, d: false };
+    let moveSpeed = 0.05;
+    window.addEventListener("keydown", (event) => {
+      if (keys[event.key] !== undefined) {
+        keys[event.key] = true;
+        updateAnimation();
+      }
+    });
+    window.addEventListener("keyup", (event) => {
+      if (keys[event.key] !== undefined) {
+        keys[event.key] = false;
+        updateAnimation();
+      }
+    });
+
+    function updateAnimation() {
+      const isMoving = keys.w || keys.a || keys.s || keys.d;
+      if (isMoving && activeAction !== walkAction) {
+        switchAnimation(walkAction);
+      } else if (!isMoving && activeAction !== idleAction) {
+        switchAnimation(idleAction);
+      }
+    }
+
+    function switchAnimation(newAction) {
+      activeAction.fadeOut(0.2);
+      newAction.reset().fadeIn(0.2).play();
+      activeAction = newAction;
+    }
+
+    // MOVIMENTO DO PERSONAGEM E DETECÇÃO DE COLISÕES (exceto com a porta)
+    function updateCharacterMovement() {
+      if (!character || !characterBoundingBoxOffset) return;
+      const direction = new THREE.Vector3();
+      if (keys.w) direction.z -= 1;
+      if (keys.s) direction.z += 1;
+      if (keys.a) direction.x -= 1;
+      if (keys.d) direction.x += 1;
+      if (direction.lengthSq() > 0) {
+        direction.normalize();
+        const candidatePosition = character.position.clone().add(direction.clone().multiplyScalar(moveSpeed));
+        const candidateMin = candidatePosition.clone().add(characterBoundingBoxOffset.min);
+        const candidateMax = candidatePosition.clone().add(characterBoundingBoxOffset.max);
+        const candidateBox = new THREE.Box3(candidateMin, candidateMax);
+        let collision = false;
+        for (let i = 0; i < collidableBoxes.length; i++) {
+          if (candidateBox.intersectsBox(collidableBoxes[i])) {
+            collision = true;
+            console.log("Colisão detectada com:", collidableBoxes[i]);
+            break;
+          }
         }
+        if (!collision) {
+          character.position.copy(candidatePosition);
+          const targetPosition = candidatePosition.clone().add(direction);
+          character.lookAt(targetPosition);
+        }
+      }
+    }
 
-        const clock = new THREE.Clock(); // Criar um clock para animação
-        animate();
+    // LOOP DE ANIMAÇÃO
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+      if (mixer) mixer.update(delta);
+      if (npcMixer) npcMixer.update(delta);
+      updateCharacterMovement();
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
 
-        // Ajuste ao redimensionar a tela
-        window.addEventListener('resize', () => {
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-        });
-    </script>
+    window.addEventListener("resize", () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    });
+
+    // Inicia carregando o ambiente (o que definirá a posição da porta) e depois o personagem
+    loadEnvironment();
+  </script>
 </body>
 </html>
