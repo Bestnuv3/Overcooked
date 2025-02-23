@@ -51,13 +51,6 @@
 
             character.scale.set(1.25, 1.25, 1.25);
 
-            character.traverse((node) => {
-                if (node.isMesh) {
-                    node.castShadow = true;  // Modelo lança sombra
-                    node.receiveShadow = true; // Modelo recebe sombra
-                }
-            });
-
             // Criar AnimationMixer
             mixer = new THREE.AnimationMixer(character);
 
@@ -95,6 +88,29 @@
                 character.lookAt(targetPosition); // Faz o personagem girar na direção do movimento
             }
         }
+
+        let npc, npcMixer, npcIdleAction, npcWalkAction, npcActiveAction; // Variáveis separadas para o NPC
+
+        loader.load('npcLowPoly.glb', function (gltf) {
+            npc = gltf.scene;
+            scene.add(npc);
+            npc.position.set(6, 4, 0);
+            //npc.scale.set(1.25, 1.25, 1.25);
+
+            // Criar um AnimationMixer separado para o NPC
+            npcMixer = new THREE.AnimationMixer(npc);
+
+            // Obter animações do NPC
+            const npcAnimations = gltf.animations;
+            npcIdleAction = npcMixer.clipAction(npcAnimations[0]); // Primeira animação (Idle)
+            npcWalkAction = npcMixer.clipAction(npcAnimations[1]); // Segunda animação (Walking)
+
+            // Definir ação inicial do NPC
+            npcActiveAction = npcIdleAction;
+            npcActiveAction.play();
+        }, undefined, function (error) {
+            console.error('Erro ao carregar NPC:', error);
+        });
 
         /// Controles de câmera
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -136,20 +152,18 @@
             activeAction = newAction;
         }
 
-
-        // Loop de animação
         function animate() {
             requestAnimationFrame(animate);
-    
+
             const delta = clock.getDelta();
-            if (mixer) mixer.update(delta); // Atualizar animações
+            if (mixer) mixer.update(delta); // Atualizar animações do personagem
+            if (npcMixer) npcMixer.update(delta); // Atualizar animações do NPC
 
             updateCharacterMovement(); // Atualiza posição do personagem
 
             controls.update();
             renderer.render(scene, camera);
         }
-
 
         const clock = new THREE.Clock(); // Criar um clock para animação
         animate();
