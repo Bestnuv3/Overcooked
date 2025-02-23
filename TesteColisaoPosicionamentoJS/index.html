@@ -1,46 +1,33 @@
 <!DOCTYPE html>
 <html lang="pt">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Visualizador 3D - Three.js</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visualizador 3D - Three.js</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body style="margin: 0; overflow: hidden;">
-    <script>
-        // Configuração da cena
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
+  <script>
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
 
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3); // Cor branca, intensidade 0.3
-        scene.add(ambientLight);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+    scene.add(ambientLight);
 
-        renderer.shadowMap.enabled = true;  
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-        // Carregador GLTF
-        const loader = new THREE.GLTFLoader();
-        loader.load('uncookedRestaurant.glb', function (gltf) {
-            const model = gltf.scene;
-            scene.add(model);
-            model.position.set(0, 0, 0); // Ajuste a posição se necessário
+    const loader = new THREE.GLTFLoader();
 
-            // Ajustar a intensidade das luzes dentro do modelo
-            model.traverse((node) => {
-                if (node instanceof THREE.Light) { // Correção: Verifica se é uma luz
-                    node.intensity *= 0.0007; // Reduz brilho para 10% do valor original
-                }
-            });
 
-        }, undefined, function (error) {
-            console.error('Erro ao carregar modelo:', error);
-        });
+    const collidableObjects = [];
 
+<<<<<<< HEAD
         let mixer, idleAction, walkAction, activeAction;
         let character; // Declaração global do personagem
 
@@ -143,37 +130,166 @@
             } else if (!isMoving && activeAction !== idleAction) {
                 switchAnimation(idleAction);
             }
+=======
+    loader.load('uncookedRestaurant.glb', function(gltf) {
+      const model = gltf.scene;
+      scene.add(model);
+      model.position.set(0, 0, 0);
+      model.traverse((node) => {
+        if (node.isMesh) {
+          node.castShadow = true;
+          node.receiveShadow = true;
+          collidableObjects.push(node);
         }
-
-        // Função para trocar suavemente entre animações
-        function switchAnimation(newAction) {
-            activeAction.fadeOut(0.2);
-            newAction.reset().fadeIn(0.2).play();
-            activeAction = newAction;
+        if (node instanceof THREE.Light) {
+          node.intensity *= 0.0007;
+>>>>>>> 7ed1afd968978f04ad12c1c7b86da895b38af93d
         }
+      });
+    }, undefined, function(error) {
+      console.error('Erro ao carregar modelo:', error);
+    });
 
+    let mixer, idleAction, walkAction, activeAction;
+    let character;
+
+    loader.load('characterLowPoly.glb', function(gltf) {
+      character = gltf.scene;
+      scene.add(character);
+      character.position.y += 1;
+      character.scale.set(1.25, 1.25, 1.25);
+      character.traverse((node) => {
+        if (node.isMesh) {
+          node.castShadow = true;
+          node.receiveShadow = true;
+        }
+      });
+      mixer = new THREE.AnimationMixer(character);
+      const animations = gltf.animations;
+      idleAction = mixer.clipAction(animations[0]);
+      walkAction = mixer.clipAction(animations[1]); 
+      activeAction = idleAction;
+      activeAction.play();
+    }, undefined, function(error) {
+      console.error('Erro ao carregar personagem:', error);
+    });
+
+<<<<<<< HEAD
         function animate() {
             requestAnimationFrame(animate);
 
             const delta = clock.getDelta();
             if (mixer) mixer.update(delta); // Atualizar animações do personagem
             if (npcMixer) npcMixer.update(delta); // Atualizar animações do NPC
+=======
+    let moveSpeed = 0.05;
+    const keys = { w: false, a: false, s: false, d: false };
 
-            updateCharacterMovement(); // Atualiza posição do personagem
+    function resolveCollisions() {
+      if (!character) return;
+    
+      const charBox = new THREE.Box3().setFromObject(character);
+     
+      for (let i = 0; i < collidableObjects.length; i++) {
+        const objBox = new THREE.Box3().setFromObject(collidableObjects[i]);
+        if (charBox.intersectsBox(objBox)) {
+          
+          let overlapX1 = charBox.max.x - objBox.min.x;
+          let overlapX2 = objBox.max.x - charBox.min.x;
+          let dx = (overlapX1 < overlapX2) ? -overlapX1 : overlapX2;
+          
+          let overlapZ1 = charBox.max.z - objBox.min.z;
+          let overlapZ2 = objBox.max.z - charBox.min.z;
+          let dz = (overlapZ1 < overlapZ2) ? -overlapZ1 : overlapZ2;
+          
+>>>>>>> 7ed1afd968978f04ad12c1c7b86da895b38af93d
 
-            controls.update();
-            renderer.render(scene, camera);
+          if (Math.abs(dx) < Math.abs(dz)) {
+            character.position.x += dx;
+          } else {
+            character.position.z += dz;
+          }
+
+          charBox.setFromObject(character);
         }
+      }
+    }
 
+<<<<<<< HEAD
         const clock = new THREE.Clock(); // Criar um clock para animação
         animate();
+=======
+    // Atualiza a caixa
+    function updateCharacterMovement() {
+      if (!character) return;
+      let moveVec = new THREE.Vector3();
+      if (keys.w) moveVec.z -= 1;
+      if (keys.s) moveVec.z += 1;
+      if (keys.a) moveVec.x -= 1;
+      if (keys.d) moveVec.x += 1;
+      if (moveVec.lengthSq() === 0) return;
+      
+      moveVec.normalize().multiplyScalar(moveSpeed);
+      
+      character.position.add(moveVec);
+      resolveCollisions();
+      
+      const target = character.position.clone().add(moveVec);
+      character.lookAt(target);
+    }
 
-        // Ajuste ao redimensionar a tela
-        window.addEventListener('resize', () => {
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-        });
-    </script>
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    camera.position.set(0, 13, 17);
+    controls.enableZoom = false;
+    controls.update();
+>>>>>>> 7ed1afd968978f04ad12c1c7b86da895b38af93d
+
+    window.addEventListener('keydown', (event) => {
+      if (keys[event.key] !== undefined) {
+        keys[event.key] = true;
+        updateAnimation();
+      }
+    });
+    window.addEventListener('keyup', (event) => {
+      if (keys[event.key] !== undefined) {
+        keys[event.key] = false;
+        updateAnimation();
+      }
+    });
+
+    function updateAnimation() {
+      const isMoving = keys.w || keys.a || keys.s || keys.d;
+      if (isMoving && activeAction !== walkAction) {
+        switchAnimation(walkAction);
+      } else if (!isMoving && activeAction !== idleAction) {
+        switchAnimation(idleAction);
+      }
+    }
+
+    function switchAnimation(newAction) {
+      activeAction.fadeOut(0.2);
+      newAction.reset().fadeIn(0.2).play();
+      activeAction = newAction;
+    }
+
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+      if (mixer) mixer.update(delta);
+      updateCharacterMovement();
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    });
+  </script>
 </body>
 </html>
