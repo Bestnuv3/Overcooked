@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="pt">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,6 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
+
 <body style="margin: 0; overflow: hidden;">
   <script>
     // CONFIGURAÇÃO BÁSICA: CENA, CÂMERA E RENDERIZADOR
@@ -26,8 +28,38 @@
     scene.add(ambientLight);
 
     // Variáveis globais
-    let collidableBoxes = []; 
-    let doorSpawnPosition = null; 
+    let collidableBoxes = [];
+    let doorSpawnPosition = null;
+
+    // Variáveis do sistema de pedidos
+    let orderActive = false;
+    let currentOrder = null;
+    let orderTimer = null;
+    let orderTimeLimit = 120000; // 2 minutos em milissegundos
+    let interactionPoints = [];
+    let currentInteractionPoint = 0;
+    let canInteract = false;
+
+    const DEBUG = true;
+    const DEBUG_COLORS = {
+      COLLISION: 0xff0000,
+      INTERACTION: 0x00ff00,
+      SELECTED: 0xffff00
+    };
+
+    // Lista de pedidos possíveis
+    const possibleOrders = [
+      {
+        name: 'Hambúrguer',
+        steps: [
+          { location: 'balcao_central', instruction: 'Aceitar pedido' },
+          { location: 'balcao_prep', instruction: 'Pegue o pão' },
+          { location: 'geladeira', instruction: 'Pegue a carne' },
+          { location: 'fogao', instruction: 'Cozinhe a carne' },
+          { location: 'balcao_entrega', instruction: 'Entregue o hambúrguer' }
+        ]
+      }
+    ];
 
     // Variáveis do personagem
     let character, mixer, idleAction, walkAction, activeAction;
@@ -41,60 +73,171 @@
 
     // Instância do GLTFLoader
     const loader = new THREE.GLTFLoader();
+    const textureLoader = new THREE.TextureLoader();
+    let orderInterface = null;
+    let navigationArrows = [];
+
+    function showOrderInterface(orderName, isComplaint = false) {
+      if (!npc) return;
+      if (orderInterface) {
+        scene.remove(orderInterface);
+        scene.children.forEach(child => {
+          if (child.isSprite && child !== orderInterface) {
+            scene.remove(child);
+          }
+        });
+      }
+    
+      const spriteMaterial = new THREE.SpriteMaterial({
+        map: textureLoader.load('textures/dialog_bubble.png'),
+        transparent: true
+      });
+    
+      orderInterface = new THREE.Sprite(spriteMaterial);
+      orderInterface.scale.set(4, 2.5, 1);
+      orderInterface.position.set(
+        npc.position.x,
+        npc.position.y + 9, // Aumentado ainda mais para ficar bem acima da cabeça
+        npc.position.z + 0.5 // Pequeno offset para frente
+      );
+      scene.add(orderInterface);
+    
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      canvas.width = 512;
+      canvas.height = 256;
+    
+      // Remove o fundo branco do texto
+      context.fillStyle = 'rgba(0,0,0,0)';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    
+      // Define o texto baseado no tipo de mensagem
+      const message = isComplaint ? orderName : `Pedido: ${orderName}`;
+      const instruction = !isComplaint && currentOrder && currentOrder.steps && 
+        currentOrder.steps[currentInteractionPoint] ? 
+        currentOrder.steps[currentInteractionPoint].instruction : '';
+    
+      // Configura e desenha o texto
+      context.fillStyle = '#000000';
+      context.font = 'bold 32px Arial'; // Fonte um pouco menor para caber melhor
+      context.textAlign = 'center';
+      context.fillText(message, canvas.width/2, canvas.height/2 - 20); // Ajustado para cima
+      if (!isComplaint && instruction) {
+        context.font = 'bold 28px Arial'; // Fonte menor para a instrução
+        context.fillText(instruction, canvas.width/2, canvas.height/2 + 20); // Ajustado para baixo
+      }
+    
+      const texture = new THREE.CanvasTexture(canvas);
+      const textSprite = new THREE.Sprite(new THREE.SpriteMaterial({ 
+        map: texture,
+        transparent: true 
+      }));
+      textSprite.scale.set(3.5, 2, 1); // Aumentado a escala do texto
+      textSprite.position.set(
+        orderInterface.position.x,
+        orderInterface.position.y,
+        orderInterface.position.z + 0.1
+      );
+      scene.add(textSprite);
+    }
+
+    function createNavigationArrows(targetLocation) {
+      navigationArrows.forEach(arrow => scene.remove(arrow));
+      navigationArrows = [];
+        
+      const arrowMaterial = new THREE.SpriteMaterial({
+        map: textureLoader.load('textures/arrow.png'),
+        transparent: true,
+        color: DEBUG_COLORS.INTERACTION // Using the debug color constant
+      });
+    
+      const targetPosition = getLocationPosition(targetLocation);
+      if (!targetPosition) return;
+    
+      const arrow = new THREE.Sprite(arrowMaterial);
+      arrow.scale.set(1.5, 1.5, 1.5); // Increased size for better visibility
+      
+      // Position the arrow above the interaction point
+      arrow.position.set(
+        targetPosition.x,
+        targetPosition.y + 4.5, // Increased height to be more visible
+        targetPosition.z
+      );
+    
+      // Add floating animation
+      const initialY = arrow.position.y;
+      arrow.userData.animate = function(time) {
+        arrow.position.y = initialY + Math.sin(time * 2) * 0.3; // Increased amplitude
+      };
+    
+      scene.add(arrow);
+      navigationArrows.push(arrow);
+    }
 
     // FUNÇÃO: Carrega o ambiente e obtém a posição da porta
     function loadEnvironment() {
-      loader.load('uncookedRestaurant.glb', function(gltf) {
-        const model = gltf.scene;
-        scene.add(model);
-        model.position.set(0, 0, 0);
+      console.log('Iniciando carregamento do ambiente...');
+      loader.load('models/uncookedRestaurant.glb',
+        function (gltf) {
+          console.log('Ambiente carregado com sucesso');
+          const model = gltf.scene;
+          scene.add(model);
+          model.position.set(0, 0, 0);
+        
+          // Array dos materiais que devem ter colisão
+          const collidableMaterials = ['Metal', 'Door', 'Beige', 'Dark Brown'];
+        
+          model.traverse((node) => {
+            if (node instanceof THREE.Light) {
+              node.intensity *= 0.0007;
+            }
+            if (node.isMesh) {
+              // Adiciona colisão para todos os meshes com os materiais específicos
+              if (node.material && collidableMaterials.includes(node.material.name)) {
+                console.log('Material encontrado:', node.material.name);
+                node.updateMatrixWorld(true);
+                const box = new THREE.Box3().setFromObject(node);
+                box.expandByScalar(-0.2); // Ajusta o tamanho da caixa de colisão
+              
+                if (!box.isEmpty()) {
+                  collidableBoxes.push(box);
+                  if (DEBUG) {
+                    // Aqui está a mudança, usando DEBUG_COLORS.COLLISION em vez de 0xff0000
+                    const helper = new THREE.Box3Helper(box, DEBUG_COLORS.COLLISION);
+                    scene.add(helper);
+                    console.log('Box de colisão adicionada para:', node.material.name);
+                  }
+                }
+              }
+            }
+          });
 
-        // Gere colisores para todos os objetos, exceto a porta
-        model.traverse((node) => {
-          if (node instanceof THREE.Light) {
-            node.intensity *= 0.0007;
+          // Obtenha explicitamente o objeto da porta para definir o spawn
+          // ATENÇÃO: verifique o nome exato no seu modelo (aqui usamos "Porta")
+          const doorObject = model.getObjectByName("Porta");
+          if (doorObject) {
+            doorObject.updateMatrixWorld(true);
+            // Use a posição da porta e ajuste a altura se necessário (aqui adicionamos 1 unidade no Y)
+            doorSpawnPosition = doorObject.position.clone();
+            doorSpawnPosition.y += 1;
+            console.log("Posição de spawn definida na porta:", doorSpawnPosition);
+          } else {
+            console.warn("Objeto 'Porta' não encontrado. Verifique o nome no modelo.");
           }
-          if (node.isMesh && node.visible) {
-            const nodeName = node.name.toLowerCase();
-            // Se o objeto for a porta, ignore-o para colisão
-            if (nodeName.includes("porta") || nodeName.includes("door")) {
-              return;
-            }
-            node.updateMatrixWorld(true);
-            if (!node.geometry.boundingBox) {
-              node.geometry.computeBoundingBox();
-            }
-            let box = new THREE.Box3().setFromObject(node);
-            box.expandByScalar(-0.1);
-            if (!box.isEmpty()) {
-              collidableBoxes.push(box);
-            }
-          }
-        });
-
-        // Obtenha explicitamente o objeto da porta para definir o spawn
-        // ATENÇÃO: verifique o nome exato no seu modelo (aqui usamos "Porta")
-        const doorObject = model.getObjectByName("Porta");
-        if (doorObject) {
-          doorObject.updateMatrixWorld(true);
-          // Use a posição da porta e ajuste a altura se necessário (aqui adicionamos 1 unidade no Y)
-          doorSpawnPosition = doorObject.position.clone();
-          doorSpawnPosition.y += 1;
-          console.log("Posição de spawn definida na porta:", doorSpawnPosition);
-        } else {
-          console.warn("Objeto 'Porta' não encontrado. Verifique o nome no modelo.");
+          // Após carregar o ambiente, carregue o personagem e o NPC
+          loadCharacter();
+          loadNPC();
+            },
+        undefined,
+        function (error) {
+          console.error('Erro ao carregar ambiente:', error);
         }
-        // Após carregar o ambiente, carregue o personagem e o NPC
-        loadCharacter();
-        loadNPC();
-      }, undefined, function(error) {
-        console.error("Erro ao carregar o ambiente:", error);
-      });
+      );
     }
 
     // FUNÇÃO: Carrega o personagem e posiciona na porta
     function loadCharacter() {
-      loader.load('characterLowPoly.glb', function(gltf) {
+      loader.load('models/characterLowPoly.glb', function (gltf) {
         character = gltf.scene;
         scene.add(character);
         // Se a posição de spawn da porta foi definida, use-a; senão, posicione em (0,1,0)
@@ -104,18 +247,18 @@
           character.position.set(-1, 1, -3);
         }
         character.scale.set(1.25, 1.25, 1.25);
-      
+
         // Faz o personagem olhar para a posição inicial do NPC
         const npcPosition = new THREE.Vector3(9, 1, -3); // Posição inicial do NPC
         character.lookAt(npcPosition);
-      
+
         mixer = new THREE.AnimationMixer(character);
         const animations = gltf.animations;
         idleAction = mixer.clipAction(animations[0]);
         walkAction = mixer.clipAction(animations[1]);
         activeAction = idleAction;
         activeAction.play();
-      
+
         // Calcula o bounding box do personagem e armazena o offset em relação à sua posição
         const bbox = new THREE.Box3().setFromObject(character);
         bbox.expandByScalar(-0.1);
@@ -123,14 +266,14 @@
           min: bbox.min.clone().sub(character.position),
           max: bbox.max.clone().sub(character.position)
         };
-      }, undefined, function(error) {
+      }, undefined, function (error) {
         console.error("Erro ao carregar o personagem:", error);
       });
     }
 
     // FUNÇÃO: Carrega o NPC
     function loadNPC() {
-      loader.load('npcLowPoly.glb', function(gltf) {
+      loader.load('models/npcLowPoly.glb', function (gltf) {
         npc = gltf.scene;
         scene.add(npc);
         npc.position.set(17, 1, -3);
@@ -145,7 +288,7 @@
 
         // Inicia o movimento do NPC
         startNPCMovement();
-      }, undefined, function(error) {
+      }, undefined, function (error) {
         console.error("Erro ao carregar o NPC:", error);
       });
     }
@@ -153,23 +296,19 @@
     // Funções para controle do movimento do NPC
     function startNPCMovement() {
       const waypoints = [
-        new THREE.Vector3(17, 1, -3),    // Posição inicial
-        new THREE.Vector3(6, 1, -3),    // Posição final
+        new THREE.Vector3(9, 1, -3),    // Posição inicial
+        new THREE.Vector3(5, 1, -3),    // Posição final
       ];
-      let currentWaypoint = 0;
 
-      function moveToNextWaypoint() {
-        currentWaypoint = 1; // Sempre vai para o ponto final
-        npcTargetPosition.copy(waypoints[currentWaypoint]);
-        npcIsMoving = true;
+      npcTargetPosition.copy(waypoints[1]);
+      npcIsMoving = true;
+      if (npcWalkAction) {
         switchNPCAnimation(npcWalkAction);
       }
-
-      moveToNextWaypoint();
     }
 
     function updateNPCMovement() {
-      if (!npc || !npcIsMoving) return;
+      if (!npc || !npcIsMoving || !npcTargetPosition) return;
 
       const direction = npcTargetPosition.clone().sub(npc.position);
       const distance = direction.length();
@@ -179,10 +318,11 @@
         npc.position.add(direction.multiplyScalar(npcMoveSpeed));
         npc.lookAt(npcTargetPosition);
       } else {
-        // Quando chegar ao destino, para completamente
         npcIsMoving = false;
         switchNPCAnimation(npcIdleAction);
-        // Não adiciona setTimeout aqui para que ele pare no destino
+        if (!orderActive) {
+          createNewOrder();
+        }
       }
     }
 
@@ -191,6 +331,137 @@
       npcActiveAction.fadeOut(0.2);
       newAction.reset().fadeIn(0.2).play();
       npcActiveAction = newAction;
+    }
+
+    function createNewOrder() {
+      orderActive = true;
+      currentOrder = possibleOrders[Math.floor(Math.random() * possibleOrders.length)];
+
+      // Criar bolha de diálogo ou interface para mostrar o pedido
+      showOrderInterface(currentOrder.name);
+
+      // Iniciar timer do pedido
+      orderTimer = setTimeout(() => {
+        if (orderActive) {
+          cancelOrder();
+        }
+      }, orderTimeLimit);
+
+      // Criar setas de navegação para o primeiro passo
+      createNavigationArrows(currentOrder.steps[0].location);
+    }
+
+    function cancelOrder() {
+      orderActive = false;
+      clearTimeout(orderTimer);
+
+      // Remove as setas de navegação
+      navigationArrows.forEach(arrow => scene.remove(arrow));
+      navigationArrows = [];
+
+      // Mostrar mensagem de reclamação
+      showOrderInterface("Demorou muito!", true);
+
+      // Fazer NPC ir embora
+      const exitPoint = new THREE.Vector3(17, 1, -3);
+      npcTargetPosition.copy(exitPoint);
+      npcIsMoving = true;
+
+      // Remove a mensagem após alguns segundos
+      setTimeout(() => {
+        if (orderInterface) {
+          scene.remove(orderInterface);
+          scene.children.forEach(child => {
+            if (child.isSprite && child !== orderInterface) {
+              scene.remove(child);
+            }
+          });
+        }
+      }, 3000);
+    }
+
+    function completeOrder() {
+      orderActive = false;
+      clearTimeout(orderTimer);
+
+      // Remove as setas de navegação
+      navigationArrows.forEach(arrow => scene.remove(arrow));
+      navigationArrows = [];
+
+      // Mostrar mensagem de agradecimento
+      showOrderInterface("Obrigado pelo pedido!", true);
+
+      // Fazer NPC ir embora imediatamente
+      const exitPoint = new THREE.Vector3(17, 1, -3);
+      npcTargetPosition.copy(exitPoint);
+      npcIsMoving = true;
+      switchNPCAnimation(npcWalkAction);
+
+      // Remove a mensagem após 3 segundos
+      setTimeout(() => {
+        if (orderInterface) {
+          scene.remove(orderInterface);
+          scene.children.forEach(child => {
+            if (child.isSprite && child !== orderInterface) {
+              scene.remove(child);
+            }
+          });
+        }
+      }, 3000);
+    }
+
+    // Função para interação com objetos
+    function handleInteraction(e) {
+      if (!orderActive || !currentOrder || !currentOrder.steps || 
+          currentInteractionPoint >= currentOrder.steps.length) return;
+
+      const currentStep = currentOrder.steps[currentInteractionPoint];
+      if (currentStep && isAtCorrectLocation(currentStep.location)) {
+        console.log('Interagindo com:', currentStep.location);
+        progressOrder();
+      }
+    }
+
+    function progressOrder() {
+      if (!orderActive || currentInteractionPoint >= currentOrder.steps.length) return;
+
+      const currentStep = currentOrder.steps[currentInteractionPoint];
+      if (isAtCorrectLocation(currentStep.location)) {
+        if (currentInteractionPoint === currentOrder.steps.length - 1) {
+          // Último passo - completa o pedido
+          completeOrder();
+          return;
+        }
+      
+        // Remove o balão de diálogo após a primeira interação
+        if (currentInteractionPoint === 0) {
+          scene.remove(orderInterface);
+          scene.children.forEach(child => {
+            if (child.isSprite && child !== orderInterface) {
+              scene.remove(child);
+            }
+          });
+        }
+      
+        currentInteractionPoint++;
+        createNavigationArrows(currentOrder.steps[currentInteractionPoint].location);
+        console.log('Próximo passo:', currentOrder.steps[currentInteractionPoint].location);
+      }
+    }
+
+    function playNPCComplaintAnimation() {
+      // Por enquanto apenas um console.log
+      console.log("NPC reclamando");
+    }
+
+    function playNPCSatisfiedAnimation() {
+      // Por enquanto apenas um console.log
+      console.log("NPC satisfeito");
+    }
+
+    function addBagToNPC() {
+      // Por enquanto apenas um console.log
+      console.log("Sacola adicionada ao NPC");
     }
 
     // CONTROLE DA CÂMERA COM ORBITCONTROLS
@@ -207,7 +478,11 @@
         keys[event.key] = true;
         updateAnimation();
       }
+      if (event.key === 'e' || event.key === 'E') {
+        handleInteraction(event);
+      }
     });
+
     window.addEventListener("keyup", (event) => {
       if (keys[event.key] !== undefined) {
         keys[event.key] = false;
@@ -230,6 +505,81 @@
       activeAction = newAction;
     }
 
+    function getLocationPosition(location) {
+      const locations = {
+        'balcao_central': new THREE.Vector3(0, 1, 0),     // Balcão central
+        'fogao': new THREE.Vector3(-7, 1, 7),             // Fogão
+        'balcao_prep': new THREE.Vector3(-7, 1, 0),       // Balcão com utensílios
+        'geladeira': new THREE.Vector3(-7, 1, -7),        // Geladeira
+        'balcao_entrega': new THREE.Vector3(-1, 1, -3)    // Ponto de entrega (mesmo ponto inicial do character)
+      };
+      return locations[location] || new THREE.Vector3(0, 1, 0);
+    }
+
+    function createNavigationArrows(targetLocation) {
+      navigationArrows.forEach(arrow => scene.remove(arrow));
+      navigationArrows = [];
+    
+      const arrowMaterial = new THREE.SpriteMaterial({
+        map: textureLoader.load('textures/arrow.png'),
+        transparent: true,
+        color: 0x00ff00
+      });
+    
+      const targetPosition = getLocationPosition(targetLocation);
+      const arrow = new THREE.Sprite(arrowMaterial);
+      arrow.scale.set(1, 1, 1);
+      arrow.position.set(
+        targetPosition.x,
+        targetPosition.y + 4, // Aumentado para ficar mais alto
+        targetPosition.z
+      );
+    
+      const initialY = arrow.position.y;
+      arrow.userData.animate = function(time) {
+        arrow.position.y = initialY + Math.sin(time * 2) * 0.2;
+      };
+    
+      scene.add(arrow);
+      navigationArrows.push(arrow);
+    }
+
+    function handleInteraction(e) {
+      if (!orderActive && !currentOrder) return;
+
+      const currentStep = currentOrder.steps[currentInteractionPoint];
+      if (isAtCorrectLocation(currentStep.location)) {
+        console.log('Interagindo com:', currentStep.location);
+        progressOrder();
+      }
+    }
+
+    function isAtCorrectLocation(location) {
+      if (!character) return false;
+
+      const targetPosition = getLocationPosition(location);
+      if (!targetPosition) return false;
+
+      const distance = character.position.distanceTo(targetPosition);
+      const direction = targetPosition.clone().sub(character.position).normalize();
+      const characterForward = new THREE.Vector3(0, 0, -1).applyQuaternion(character.quaternion);
+      const dotProduct = direction.dot(characterForward);
+
+      // Verifica se está próximo E olhando para o objeto
+      canInteract = distance < 2 && dotProduct > 0.5;
+
+      // Debug
+      if (DEBUG && canInteract) {
+        console.log('Pode interagir com:', location, 'na posição:', targetPosition);
+      }
+    
+      navigationArrows.forEach(arrow => {
+        arrow.material.color.setHex(canInteract ? DEBUG_COLORS.SELECTED : DEBUG_COLORS.INTERACTION);
+      });
+    
+      return canInteract;
+    }
+
     // MOVIMENTO DO PERSONAGEM E DETECÇÃO DE COLISÕES (exceto com a porta)
     function updateCharacterMovement() {
       if (!character || !characterBoundingBoxOffset) return;
@@ -238,20 +588,39 @@
       if (keys.s) direction.z += 1;
       if (keys.a) direction.x -= 1;
       if (keys.d) direction.x += 1;
+
       if (direction.lengthSq() > 0) {
         direction.normalize();
         const candidatePosition = character.position.clone().add(direction.clone().multiplyScalar(moveSpeed));
+
+        // Limites do floor (ajuste esses valores conforme seu ambiente)
+        const floorLimits = {
+          minX: -8,
+          maxX: 8,
+          minZ: -8,
+          maxZ: 8
+        };
+      
+        // Verifica se está dentro dos limites do floor
+        if (candidatePosition.x < floorLimits.minX || 
+            candidatePosition.x > floorLimits.maxX ||
+            candidatePosition.z < floorLimits.minZ || 
+            candidatePosition.z > floorLimits.maxZ) {
+          return;
+        }
+      
         const candidateMin = candidatePosition.clone().add(characterBoundingBoxOffset.min);
         const candidateMax = candidatePosition.clone().add(characterBoundingBoxOffset.max);
         const candidateBox = new THREE.Box3(candidateMin, candidateMax);
         let collision = false;
+      
         for (let i = 0; i < collidableBoxes.length; i++) {
           if (candidateBox.intersectsBox(collidableBoxes[i])) {
             collision = true;
-            console.log("Colisão detectada com:", collidableBoxes[i]);
             break;
           }
         }
+      
         if (!collision) {
           character.position.copy(candidatePosition);
           const targetPosition = candidatePosition.clone().add(direction);
@@ -262,13 +631,48 @@
 
     // LOOP DE ANIMAÇÃO
     const clock = new THREE.Clock();
+    // Modifique a função animate para usar o objeto locations diretamente
     function animate() {
       requestAnimationFrame(animate);
       const delta = clock.getDelta();
+      const time = clock.getElapsedTime();
+    
       if (mixer) mixer.update(delta);
       if (npcMixer) npcMixer.update(delta);
+    
+      // Debug: Visualização dos pontos de interação
+      if (DEBUG) {
+        const locations = {
+          'balcao_central': new THREE.Vector3(0, 1, 0),     // Balcão central
+          'fogao': new THREE.Vector3(-5, 1, 5),             // Fogão (esquerda/frente)
+          'balcao_prep': new THREE.Vector3(-5, 1, 2),       // Balcão com utensílios
+          'geladeira': new THREE.Vector3(-5, 1, -2),        // Geladeira
+          'balcao_entrega': new THREE.Vector3(5, 1, 0)      // Balcão de entrega (NPC)
+        };
+      
+        Object.entries(locations).forEach(([location, position]) => {
+          // Remove marcadores antigos
+          scene.children = scene.children.filter(child => !child.isDebugSphere);
+        
+          // Cria novo marcador
+          const geometry = new THREE.SphereGeometry(0.1, 32, 32);
+          const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+          const sphere = new THREE.Mesh(geometry, material);
+          sphere.position.copy(position);
+          sphere.isDebugSphere = true;
+          scene.add(sphere);
+        });
+      }
+    
+      // Anima as setas
+      navigationArrows.forEach(arrow => {
+        if (arrow.userData.animate) {
+          arrow.userData.animate(time);
+        }
+      });
+    
       updateCharacterMovement();
-      updateNPCMovement(); // Adiciona o update do NPC
+      updateNPCMovement();
       controls.update();
       renderer.render(scene, camera);
     }
@@ -284,4 +688,5 @@
     loadEnvironment();
   </script>
 </body>
+
 </html>
